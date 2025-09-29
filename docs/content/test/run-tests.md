@@ -44,8 +44,7 @@ aliases:
 
 ## Run automated tests
 
-{{< tabs "version" >}}
-
+{{% tabs "version" %}}
 {{< tab "GA Provider" >}}
 
 1. Run unit tests and linters
@@ -85,7 +84,6 @@ aliases:
     ```
 
 {{< /tab >}}
-
 {{< tab "Beta Provider" >}}
 
 1. Run unit tests and linters
@@ -99,7 +97,7 @@ aliases:
 1. Run acceptance tests for only modified resources. (Full test runs can take over 9 hours.) See [Go's documentation](https://pkg.go.dev/cmd/go#hdr-Testing_flags) for more information about `-run` and other flags.
 
     ```bash
-    make testacc TEST=./google-beta/services/container TESTARGS='-run=TestAccContainerNodePool'
+    make testacc TEST=./google-beta/services/container TESTARGS='-run=TestAccContainerNodePool_basic$$'
     ```
 
     To run all tests matching, e.g., `TestAccContainerNodePool*`, omit the trailing `$$`:
@@ -124,15 +122,65 @@ aliases:
     ```
 
 {{< /tab >}}
+{{% /tabs %}}
 
-{{< /tabs >}}
+## Troubleshooting acceptance tests {#troubleshooting}
 
-### Common errors
+### After applying this test step, the plan was not empty.
 
-- `After applying this test step, the plan was not empty.`
-  - See [Fix diffs]({{< ref "/develop/diffs" >}}).
-- `Blocks of type "FIELD_NAME" are not expected here`
-  - The field does not exist; this is either because it has not been implemented or because the test is running for the `google` provider and the field is only implemented in the `google-beta` provider. See [Add resource tests]({{< ref "/test/test" >}}) for information on using version guards to exclude beta-only fields from GA tests, or [Promote from beta to GA]({{< ref "/develop/promote-to-ga" >}}) for information on how to promote fields that were accidentally made beta-only.
+This indicates that the returned values from the API (which will be displayed on the left) are different than what is in the configuration (displayed on the right). Fields which are listed as "known after apply" are not the cause of the diff and can be ignored in terms of resolving the issue.
+
+See [Fix diffs]({{< ref "/develop/diffs" >}}) for more information on potential causes and fixes.
+
+### Blocks of type "FIELD_NAME" are not expected here
+
+The field called `FIELD_NAME` does not exist; this is either because it has not been implemented or because the test is running for the `google` provider and the field is only implemented in the `google-beta` provider. See [Add resource tests]({{< ref "/test/test" >}}) for information on using version guards to exclude beta-only fields from GA tests, or [Promote from beta to GA]({{< ref "/develop/promote-to-ga" >}}) for information on how to promote fields that were accidentally made beta-only.
+
+### Provider produced inconsistent result after apply ... Root object was present, but now absent.
+
+This indicates that after an apply to create or update a resource, the resource was not present in Terraform state. This generally means one of a few things:
+
+- [API is eventually consistent or returns an Operation]({{< ref "/develop/diffs#eventually-consistent" >}})
+- The URL for reads was built incorrectly. The exact fix will depend on why this is happening. Run the test with the `TF_LOG=DEBUG` environment variable and check whether the read URL matches what you expect.
+- There is a call to unset the resource's id (`d.SetId("")`) somewhere it shouldn't be. The fix is to remove that extraneous call. This is rare.
+
+### Error: Inconsistent dependency lock file
+
+Tests require all of the providers they use (except the one actually being tested) to be explicitly stated. This error generally means one of a few things:
+
+- If the error mentions `provider registry.terraform.io/hashicorp/google`:
+  - Beta-only test: This indicates that one of the `google_*` resources in the test doesn't have `provider = google-beta` set
+    - ```hcl
+      resource "google_compute_instance" "beta-instance" {
+        provider = google-beta
+        # ...
+      }
+      ```
+  - GA+beta test: This indicates that the wrong setting is being used for `ProtoV5ProviderFactories` on a handwritten test case. Should be:
+    - ```go
+      acctest.VcrTest(t, resource.TestCase{
+		    // ...
+		    ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories(t),
+      ```
+- If the error mentions `provider registry.terraform.io/hashicorp/google-beta`:
+  - Beta-only test: This indicates that the wrong setting is being used for `ProtoV5ProviderFactories` on a handwritten test case. Should be:
+    - ```go
+      acctest.VcrTest(t, resource.TestCase{
+		    // ...
+		    ProtoV5ProviderFactories: acctest.ProtoV5ProviderBetaFactories(t),
+      ```
+  - GA+beta test: This indicates that one of the `google_*` resources in the test has `provider = google-beta` set. `provider = google-beta` can't be set unless the test is beta-only.
+- If the error mentions some other provider: The test relies on an external provider, such as `time`, and that is not explicitly declared
+  - For MMv1 example-based tests, use [`examples.external_providers`](https://googlecloudplatform.github.io/magic-modules/reference/resource/#examples).
+  - For Handwritten tests, use TestCase.ExternalProviders:
+    ```go
+    acctest.VcrTest(t, resource.TestCase{
+      ExternalProviders: map[string]resource.ExternalProvider{
+        "time": {},
+      },
+      // ...
+    }
+    ```
 
 ## Optional: Test with different `terraform` versions
 
@@ -158,8 +206,7 @@ For manual testing, you can build the provider from source and run `terraform ap
 
 Configure Terraform to use locally-built binaries for `google` and `google-beta` instead of downloading the latest versions.
 
-{{< tabs "built-provider" >}}
-
+{{% tabs "built-provider" %}}
 {{< tab "Developer overrides (Mac / Linux)" >}}
 
 1. Find the location where built provider binaries are created. To do this, run this command and make a note of the path value:
@@ -207,7 +254,6 @@ Configure Terraform to use locally-built binaries for `google` and `google-beta`
 1. Save the file.
 
 {{< /tab >}}
-
 {{< tab "Developer overrides (Windows)" >}}
 
 1. Find the location where built provider binaries are created. To do this, run this command and make a note of the path value:
@@ -252,8 +298,7 @@ Configure Terraform to use locally-built binaries for `google` and `google-beta`
 1. Save the file.
 
 {{< /tab >}}
-
-{{< /tabs >}}
+{{% /tabs %}}
 
 ### Run manual tests
 

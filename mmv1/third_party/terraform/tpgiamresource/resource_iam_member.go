@@ -6,6 +6,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-provider-google/google/tpgresource"
 	transport_tpg "github.com/hashicorp/terraform-provider-google/google/transport"
@@ -38,7 +39,7 @@ func validateIAMMember(i interface{}, k string) ([]string, []error) {
 	if matched, err := regexp.MatchString("(.+:.+|projectOwners|projectReaders|projectWriters|allUsers|allAuthenticatedUsers)", v); err != nil {
 		return nil, []error{fmt.Errorf("error validating %s: %v", k, err)}
 	} else if !matched {
-		return nil, []error{fmt.Errorf("invalid value for %s (IAM members must have one of the values outlined here: https://cloud.google.com/billing/docs/reference/rest/v1/Policy#Binding)", k)}
+		return nil, []error{fmt.Errorf("invalid value \"%s\" for %s (IAM members must have one of the values outlined here: https://cloud.google.com/billing/docs/reference/rest/v1/Policy#Binding)", v, k)}
 	}
 	return nil, nil
 }
@@ -172,7 +173,9 @@ func iamMemberImport(newUpdaterFunc NewResourceIamUpdaterFunc, resourceIdParser 
 func ResourceIamMember(parentSpecificSchema map[string]*schema.Schema, newUpdaterFunc NewResourceIamUpdaterFunc, resourceIdParser ResourceIdParserFunc, options ...func(*IamSettings)) *schema.Resource {
 	settings := NewIamSettings(options...)
 
-	return &schema.Resource{
+	createTimeOut := time.Duration(settings.CreateTimeOut) * time.Minute
+
+	resourceSchema := &schema.Resource{
 		Create: resourceIamMemberCreate(newUpdaterFunc, settings.EnableBatching),
 		Read:   resourceIamMemberRead(newUpdaterFunc),
 		Delete: resourceIamMemberDelete(newUpdaterFunc, settings.EnableBatching),
@@ -181,12 +184,21 @@ func ResourceIamMember(parentSpecificSchema map[string]*schema.Schema, newUpdate
 		// resource is used.
 		DeprecationMessage: settings.DeprecationMessage,
 
-		Schema: tpgresource.MergeSchemas(IamMemberBaseSchema, parentSpecificSchema),
+		Schema:         tpgresource.MergeSchemas(IamMemberBaseSchema, parentSpecificSchema),
+		SchemaVersion:  settings.SchemaVersion,
+		StateUpgraders: settings.StateUpgraders,
 		Importer: &schema.ResourceImporter{
 			State: iamMemberImport(newUpdaterFunc, resourceIdParser),
 		},
 		UseJSONNumber: true,
 	}
+
+	if createTimeOut > 0 {
+		resourceSchema.Timeouts = &schema.ResourceTimeout{
+			Create: schema.DefaultTimeout(createTimeOut),
+		}
+	}
+	return resourceSchema
 }
 
 func getResourceIamMember(d *schema.ResourceData) *cloudresourcemanager.Binding {
